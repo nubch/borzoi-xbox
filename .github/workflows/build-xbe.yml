@@ -1,0 +1,23 @@
+name: Build original Xbox XBE
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  xbox:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y make cmake clang lld llvm bison flex ffmpeg build-essential git
+      - name: Clone Xbox SDK
+        run: git clone --recursive --depth 1 https://github.com/XboxDev/nxdk.git ../nxdk
+      - name: Compile XBE and convert audio
+        run: bash ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: borzoi-original-xbox
+          path: release/
+          if-no-files-found: error
