@@ -19,6 +19,11 @@ static uint32_t screen[W*H];
 static float depthbuf[W*H];
 static FILE *music;
 static int music_playing=0;
+static volatile unsigned int audio_callbacks=0;
+static long audio_pcm_bytes=0;
+static const char *audio_file_path=NULL;
+static int audio_status=0; /* 0 waiting, 1 playing, 2 file error, 3 audio device error */
+
 /* Stage log survives a crash and can be collected via FTP from E:\\borzoi_debug.log */
 static void trace_stage(const char *msg){
   FILE *f=fopen("E:\\borzoi_debug.log","a");
@@ -195,6 +200,7 @@ static void audio_callback(void *userdata,Uint8 *stream,int len){
   size_t got=0;
   (void)userdata;
   memset(stream,0,(size_t)len);
+  ++audio_callbacks;
   if(!music||!music_playing)return;
   while(got<(size_t)len){
     size_t n=fread(stream+got,1,(size_t)len-got,music);
@@ -213,22 +219,51 @@ static void audio_callback(void *userdata,Uint8 *stream,int len){
   }
 }
 static int start_audio(void){
-  SDL_AudioSpec want,have;
-  music=fopen("D:\\halo.pcm","rb");
-  if(!music)music=fopen("halo.pcm","rb");
-  if(!music)return 0;
+  SDL_AudioSpec want;
+  const char *paths[] = {"D:\\halo.pcm", "E:\\Apps\\Borzoi\\halo.pcm", "halo.pcm", NULL};
+  int i;
+  char logline[256];
+  for (i=0; paths[i]!=NULL; ++i) {
+    music=fopen(paths[i], "rb");
+    if(music) { audio_file_path=paths[i]; break; }
+  }
+  if(!music) {
+    audio_status=2;
+    trace_stage("11 - ERROR: Cannot open halo.pcm; expected beside default.xbe in D: (or E:\\Apps\\Borzoi)");
+    return 0;
+  }
+  if(fseek(music,0,SEEK_END)!=0){trace_stage("11 - ERROR: halo.pcm seek failed");fclose(music);music=NULL;audio_status=2;return 0;}
+  audio_pcm_bytes=ftell(music);
+  rewind(music);
+  snprintf(logline,sizeof(logline),"11 - Found %s (%ld bytes)",audio_file_path,audio_pcm_bytes);
+  trace_stage(logline);
+  if(audio_pcm_bytes<1000){
+    trace_stage("11 - ERROR: halo.pcm is empty or truncated");
+    fclose(music);music=NULL;audio_status=2;return 0;
+  }
   memset(&want,0,sizeof(want));
-  want.freq=22050;
+  want.freq=48000;
   want.format=AUDIO_S16LSB;
   want.channels=2;
   want.samples=2048;
   want.callback=audio_callback;
-  if(SDL_OpenAudio(&want,&have)!=0){fclose(music);music=NULL;return 0;}
-  if(have.freq!=22050||have.format!=AUDIO_S16LSB||have.channels!=2){
-    SDL_CloseAudio();fclose(music);music=NULL;return 0;
+  /*
+   * Passing NULL here requires SDL to convert to the device format.
+   * Previously passing &have and rejecting differences could silently
+   * disable playback even when SDL was able to play converted samples.
+   */
+  if(SDL_OpenAudio(&want,NULL)!=0) {
+    audio_status=3;
+    trace_stage("12 - ERROR: SDL_OpenAudio failed");
+    trace_stage(SDL_GetError());
+    fclose(music);music=NULL;
+    return 0;
   }
+  audio_status=1;
   music_playing=1;
+  trace_stage("12 - SDL_OpenAudio opened at requested 48000Hz stereo S16");
   SDL_PauseAudio(0);
+  trace_stage("13 - SDL audio playback unpaused");
   return 1;
 }
 static void stop_audio(void){
@@ -244,6 +279,7 @@ int main(int argc,char **argv){
   uint32_t previous;
   float angle=.45f,speed=.45f;
   int running=1,paused=0;
+  uint32_t last_audio_check=0;
   (void)argc;(void)argv;
   /* Required by the official nxdk SDL sample before SDL video initialization. */
   XVideoSetMode(640,480,32,REFRESH_DEFAULT);
@@ -277,13 +313,19 @@ int main(int argc,char **argv){
   trace_stage("09 - controllers initialized");
   if(SDL_InitSubSystem(SDL_INIT_AUDIO)==0){
     trace_stage("10 - audio subsystem initialized");
-    if(start_audio())trace_stage("11 - halo.pcm playback started");
-    else trace_stage("11 - halo.pcm unavailable or audio failed");
+    if(start_audio())trace_stage("14 - Music playback requested");
+    else trace_stage("14 - Music unavailable; inspect earlier log lines");
   }else{
     trace_stage("10 - SDL audio init FAILED");
     trace_stage(SDL_GetError());
   }
   previous=SDL_GetTicks();
+  trace_stage("15 - Entering rendering loop");
+  {
+    char info[128];
+    snprintf(info,sizeof(info),"audio state=%d pcm_bytes=%ld", audio_status,audio_pcm_bytes);
+    trace_stage(info);
+  }
   while(running){
     uint32_t now=SDL_GetTicks(),dt=now-previous;
     previous=now;
@@ -308,6 +350,12 @@ int main(int argc,char **argv){
       }
     }
     if(!paused)angle+=(float)dt*speed/1000.0f;
+    if(now-last_audio_check>=5000){
+      char info[100];
+      snprintf(info,sizeof(info),"AUDIO: status=%d, callbacks=%u, SDL_state=%d",audio_status,(unsigned)audio_callbacks,(int)SDL_GetAudioStatus());
+      trace_stage(info);
+      last_audio_check=now;
+    }
     scene(angle,now);
     SDL_UpdateTexture(texture,NULL,screen,W*(int)sizeof(uint32_t));
     SDL_RenderClear(renderer);
