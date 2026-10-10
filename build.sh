@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -f halo.mp3 ]]; then
   command -v ffmpeg >/dev/null || { echo 'ffmpeg needed for MP3 conversion'; exit 1; }
-  ffmpeg -hide_banner -loglevel error -y -i halo.mp3 -f s16le -acodec pcm_s16le -ac 2 -ar 22050 halo.pcm
+  ffmpeg -hide_banner -loglevel error -y -i halo.mp3 -f s16le -acodec pcm_s16le -ac 2 -ar 48000 halo.pcm
 fi
 NXDK_DIR="$(cd ../nxdk && pwd)"
 export NXDK_DIR
