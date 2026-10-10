@@ -11,5 +11,8 @@ eval "$("$NXDK_DIR/bin/activate" -s)"
 make
 mkdir -p release
 cp bin/default.xbe release/default.xbe
+echo "[DIAGNOSTIC] Building separate no-SDL screen test"
+make -C diagnostic
+cp diagnostic/bin/default.xbe release/diagnostic.xbe
 if [[ -f halo.pcm ]]; then cp halo.pcm release/halo.pcm; fi
 echo "Built release/default.xbe"
