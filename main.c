@@ -1,4 +1,5 @@
 #include <SDL.h>
+#include <hal/video.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -18,6 +19,12 @@ static uint32_t screen[W*H];
 static float depthbuf[W*H];
 static FILE *music;
 static int music_playing=0;
+/* Stage log survives a crash and can be collected via FTP from E:\\borzoi_debug.log */
+static void trace_stage(const char *msg){
+  FILE *f=fopen("E:\\borzoi_debug.log","a");
+  if(f){fprintf(f,"%s\n",msg);fclose(f);}
+}
+
 static V3 v(float x,float y,float z){ V3 p={x,y,z}; return p; }
 static V3 add(V3 a,V3 b){return v(a.x+b.x,a.y+b.y,a.z+b.z);}
 static V3 sub(V3 a,V3 b){return v(a.x-b.x,a.y-b.y,a.z-b.z);}
@@ -238,19 +245,44 @@ int main(int argc,char **argv){
   float angle=.45f,speed=.45f;
   int running=1,paused=0;
   (void)argc;(void)argv;
-  if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO|SDL_INIT_JOYSTICK|SDL_INIT_GAMECONTROLLER)!=0)return 1;
+  /* Required by the official nxdk SDL sample before SDL video initialization. */
+  XVideoSetMode(640,480,32,REFRESH_DEFAULT);
+  trace_stage("01 - XVideoSetMode OK");
+  if(SDL_Init(SDL_INIT_VIDEO)!=0){trace_stage("02 - SDL video init FAILED");trace_stage(SDL_GetError());return 1;}
+  trace_stage("02 - SDL video init OK");
   win=SDL_CreateWindow("BORZOI 2001",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,640,480,SDL_WINDOW_SHOWN);
-  if(!win){SDL_Quit();return 1;}
+  if(!win){trace_stage("03 - SDL_CreateWindow FAILED");trace_stage(SDL_GetError());SDL_Quit();return 1;}
+  trace_stage("03 - SDL_CreateWindow OK");
   renderer=SDL_CreateRenderer(win,-1,0);
-  if(!renderer){SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  if(!renderer){trace_stage("04 - SDL_CreateRenderer FAILED");trace_stage(SDL_GetError());SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  trace_stage("04 - SDL_CreateRenderer OK");
   texture=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,W,H);
-  if(!texture){SDL_DestroyRenderer(renderer);SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  if(!texture){trace_stage("05 - SDL_CreateTexture FAILED");trace_stage(SDL_GetError());SDL_DestroyRenderer(renderer);SDL_DestroyWindow(win);SDL_Quit();return 1;}
+  trace_stage("05 - SDL_CreateTexture OK");
+  create_borzoi();
+  trace_stage("06 - Borzoi model ready");
+  scene(angle,SDL_GetTicks());
+  SDL_UpdateTexture(texture,NULL,screen,W*(int)sizeof(uint32_t));
+  SDL_RenderClear(renderer);
+  SDL_RenderCopy(renderer,texture,NULL,NULL);
+  SDL_RenderPresent(renderer);
+  trace_stage("07 - first frame rendered");
+  /* Keep the first frame on screen while initializing USB and audio. */
+  SDL_InitSubSystem(SDL_INIT_JOYSTICK|SDL_INIT_GAMECONTROLLER);
+  trace_stage("08 - joystick subsystem initialized");
   if(SDL_NumJoysticks()>0){
     if(SDL_IsGameController(0))controller=SDL_GameControllerOpen(0);
     else joy=SDL_JoystickOpen(0);
   }
-  create_borzoi();
-  start_audio();
+  trace_stage("09 - controllers initialized");
+  if(SDL_InitSubSystem(SDL_INIT_AUDIO)==0){
+    trace_stage("10 - audio subsystem initialized");
+    if(start_audio())trace_stage("11 - halo.pcm playback started");
+    else trace_stage("11 - halo.pcm unavailable or audio failed");
+  }else{
+    trace_stage("10 - SDL audio init FAILED");
+    trace_stage(SDL_GetError());
+  }
   previous=SDL_GetTicks();
   while(running){
     uint32_t now=SDL_GetTicks(),dt=now-previous;
